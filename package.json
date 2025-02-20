@@ -1,0 +1,24 @@
+{
+  "name": "ssh-server",
+  "version": "1.0.0",
+  "description": "SSH MCP Server",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "@types/node": "^22.13.4",
+    "@types/sqlite3": "^3.1.11",
+    "child_process": "^1.0.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
