@@ -8,6 +8,8 @@ import {
 import { exec } from 'child_process';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 
 // Initialize database
 async function initDb() {
@@ -22,101 +24,107 @@ async function initDb() {
       name TEXT NOT NULL UNIQUE,
       host TEXT NOT NULL,
       username TEXT NOT NULL,
-      privateKey TEXT NOT NULL
+      privateKeyPath TEXT NOT NULL
     )
   `);
 
     return db;
 }
 
-class SshServer {
-    private server: Server;
+// Validate private key path
+function validatePrivateKeyPath(path: string): string {
+    const resolvedPath = resolve(path);
+    if (!existsSync(resolvedPath)) {
+        throw new Error(`Private key file not found at path: ${resolvedPath}`);
+    }
+    return resolvedPath;
+}
 
-    constructor() {
-        this.server = new Server(
+const server = new Server(
+    {
+        name: 'ssh-server',
+        version: '0.1.0',
+    },
+    {
+        capabilities: {
+            tools: {},
+        },
+    }
+);
+
+// Setup tool handlers
+function setupToolHandlers() {
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: [
             {
-                name: 'ssh-server',
-                version: '0.1.0',
+                name: 'ssh_exec',
+                description: 'Execute command over SSH using private key file path',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        host: { type: 'string' },
+                        command: { type: 'string' },
+                        username: { type: 'string' },
+                        privateKeyPath: { type: 'string' },
+                    },
+                    required: ['host', 'command', 'username', 'privateKeyPath'],
+                },
             },
             {
-                capabilities: {
-                    tools: {},
-                },
-            }
-        );
-
-        this.setupToolHandlers();
-    }
-
-    private setupToolHandlers() {
-        this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-            tools: [
-                {
-                    name: 'ssh_exec',
-                    description: 'Execute command over SSH',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            host: { type: 'string' },
-                            command: { type: 'string' },
-                            username: { type: 'string' },
-                            privateKey: { type: 'string' },
-                        },
-                        required: ['host', 'command', 'username', 'privateKey'],
+                name: 'add_credential',
+                description: 'Add a new SSH credential with private key file path',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string' },
+                        host: { type: 'string' },
+                        username: { type: 'string' },
+                        privateKeyPath: { type: 'string' },
                     },
+                    required: ['name', 'host', 'username', 'privateKeyPath'],
                 },
-                {
-                    name: 'add_credential',
-                    description: 'Add a new SSH credential',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            name: { type: 'string' },
-                            host: { type: 'string' },
-                            username: { type: 'string' },
-                            privateKey: { type: 'string' },
-                        },
-                        required: ['name', 'host', 'username', 'privateKey'],
+            },
+            {
+                name: 'list_credentials',
+                description: 'List all stored SSH credentials',
+                inputSchema: {
+                    type: 'object',
+                    properties: {},
+                    required: [],
+                },
+            },
+            {
+                name: 'remove_credential',
+                description: 'Remove a stored SSH credential',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string' },
                     },
+                    required: ['name'],
                 },
-                {
-                    name: 'list_credentials',
-                    description: 'List all stored SSH credentials',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {},
-                        required: [],
-                    },
-                },
-                {
-                    name: 'remove_credential',
-                    description: 'Remove a stored SSH credential',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            name: { type: 'string' },
-                        },
-                        required: ['name'],
-                    },
-                },
-            ],
-        }));
+            },
+        ],
+    }));
 
-        this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-            const db = await initDb();
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const db = await initDb();
 
-            switch (request.params.name) {
-                case 'ssh_exec': {
-                    const args = request.params.arguments as {
-                        host: string;
-                        command: string;
-                        username: string;
-                        privateKey: string;
-                    };
-                    const { host, command, username, privateKey } = args;
+        switch (request.params.name) {
+            case 'ssh_exec': {
+                const args = request.params.arguments as {
+                    host: string;
+                    command: string;
+                    username: string;
+                    privateKeyPath: string;
+                };
+                const { host, command, username, privateKeyPath } = args;
+
+                try {
+                    const validatedKeyPath = validatePrivateKeyPath(privateKeyPath);
 
                     return new Promise((resolve, reject) => {
-                        const sshCommand = `ssh -i ${privateKey} ${username}@${host} "${command}"`;
+                        const sshCommand = `ssh -i "${validatedKeyPath}" ${username}@${host} "${command}"`;
 
                         exec(sshCommand, (error, stdout, stderr) => {
                             if (error) {
@@ -137,19 +145,31 @@ class SshServer {
                             }
                         });
                     });
-                }
-
-                case 'add_credential': {
-                    const { name, host, username, privateKey } = request.params.arguments as {
-                        name: string;
-                        host: string;
-                        username: string;
-                        privateKey: string;
+                } catch (error: unknown) {
+                    return {
+                        content: [{
+                            type: 'text',
+                            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+                        }],
+                        isError: true,
                     };
+                }
+            }
+
+            case 'add_credential': {
+                const { name, host, username, privateKeyPath } = request.params.arguments as {
+                    name: string;
+                    host: string;
+                    username: string;
+                    privateKeyPath: string;
+                };
+
+                try {
+                    const validatedKeyPath = validatePrivateKeyPath(privateKeyPath);
 
                     await db.run(
-                        'INSERT INTO credentials (name, host, username, privateKey) VALUES (?, ?, ?, ?)',
-                        [name, host, username, privateKey]
+                        'INSERT INTO credentials (name, host, username, privateKeyPath) VALUES (?, ?, ?, ?)',
+                        [name, host, username, validatedKeyPath]
                     );
 
                     return {
@@ -158,41 +178,50 @@ class SshServer {
                             text: `Credential ${name} added successfully`
                         }]
                     };
-                }
-
-                case 'list_credentials': {
-                    const credentials = await db.all('SELECT * FROM credentials');
+                } catch (error: unknown) {
                     return {
                         content: [{
                             type: 'text',
-                            text: JSON.stringify(credentials, null, 2)
-                        }]
+                            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+                        }],
+                        isError: true,
                     };
                 }
-
-                case 'remove_credential': {
-                    const { name } = request.params.arguments as { name: string };
-                    await db.run('DELETE FROM credentials WHERE name = ?', [name]);
-                    return {
-                        content: [{
-                            type: 'text',
-                            text: `Credential ${name} removed successfully`
-                        }]
-                    };
-                }
-
-                default:
-                    throw new Error('Unknown tool');
             }
-        });
-    }
 
-    async run() {
-        const transport = new StdioServerTransport();
-        await this.server.connect(transport);
-        console.error('SSH MCP server running on stdio');
-    }
+            case 'list_credentials': {
+                const credentials = await db.all('SELECT * FROM credentials');
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(credentials, null, 2)
+                    }]
+                };
+            }
+
+            case 'remove_credential': {
+                const { name } = request.params.arguments as { name: string };
+                await db.run('DELETE FROM credentials WHERE name = ?', [name]);
+                return {
+                    content: [{
+                        type: 'text',
+                        text: `Credential ${name} removed successfully`
+                    }]
+                };
+            }
+
+            default:
+                throw new Error('Unknown tool');
+        }
+    });
 }
 
-const server = new SshServer();
-server.run().catch(console.error);
+setupToolHandlers();
+
+async function run() {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error('SSH MCP server running on stdio');
+}
+
+run().catch(console.error);
