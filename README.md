@@ -39,7 +39,106 @@ npm run build
 
 ## Usage
 
-1. Start the server:
+### Configuration
+
+The server uses a SQLite database (`ssh.db`) to store SSH credentials. The
+database file will be created automatically when the server starts.
+
+### Tools
+
+The server provides the following tools:
+
+#### ssh_exec
+
+Execute a command over SSH.
+
+**Input Parameters:**
+
+- `host`: The host to connect to. (required)
+- `command`: The command to execute. (required)
+- `username`: The username to use for the SSH connection. (required)
+- `privateKeyPath`: The path to the private key file. (required)
+
+**Example Usage:**
+
+```json
+{
+    "tool_name": "ssh_exec",
+    "arguments": {
+        "host": "example.com",
+        "command": "ls -l",
+        "username": "user",
+        "privateKeyPath": "/path/to/private/key"
+    }
+}
+```
+
+**Note:** The `privateKeyPath` must be a valid path to a private key file.
+
+#### add_credential
+
+Add a new SSH credential.
+
+**Input Parameters:**
+
+- `name`: The name of the credential. (required)
+- `host`: The host to connect to. (required)
+- `username`: The username to use for the SSH connection. (required)
+- `privateKeyPath`: The path to the private key file. (required)
+
+**Example Usage:**
+
+```json
+{
+    "tool_name": "add_credential",
+    "arguments": {
+        "name": "my_credential",
+        "host": "example.com",
+        "username": "user",
+        "privateKeyPath": "/path/to/private/key"
+    }
+}
+```
+
+**Note:** The `privateKeyPath` must be a valid path to a private key file.
+
+#### list_credentials
+
+List all stored SSH credentials.
+
+**Input Parameters:**
+
+- None
+
+**Example Usage:**
+
+```json
+{
+    "tool_name": "list_credentials",
+    "arguments": {}
+}
+```
+
+#### remove_credential
+
+Remove a stored SSH credential.
+
+**Input Parameters:**
+
+- `name`: The name of the credential to remove. (required)
+
+**Example Usage:**
+
+```json
+{
+    "tool_name": "remove_credential",
+    "arguments": {
+        "name": "my_credential"
+    }
+}
+```
+
+### Starting the server
 
 ```bash
 npm start
