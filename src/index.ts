@@ -7,10 +7,20 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { exec } from 'child_process';
 import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import { open, type Database } from 'sqlite';
 import { existsSync } from 'fs';
 import { resolve, join } from 'path';
 import os from 'os'; // Import os module
+import fs from 'fs/promises'; // Import fs promises
+
+// Define Credential type (good practice)
+interface Credential {
+    id?: number;
+    name: string;
+    host: string;
+    username: string;
+    privateKeyPath: string;
+}
 
 // Initialize database
 async function initDb() {
@@ -37,11 +47,21 @@ async function initDb() {
 
 // Validate private key path
 function validatePrivateKeyPath(path: string): string {
+    console.error('DEBUG: Validating key path input:', path); // Log input
+    if (typeof path !== 'string') {
+        throw new Error('validatePrivateKeyPath received non-string input');
+    }
     const resolvedPath = resolve(path);
+    console.error('DEBUG: Resolved key path:', resolvedPath); // Log resolved
     if (!existsSync(resolvedPath)) {
         throw new Error(`Private key file not found at path: ${resolvedPath}`);
     }
     return resolvedPath;
+}
+
+// Helper to get a credential by name
+async function getCredentialByName(db: Database, name: string): Promise<Credential | undefined> {
+    return db.get<Credential>('SELECT * FROM credentials WHERE name = ?', [name]);
 }
 
 const server = new Server(
@@ -108,11 +128,27 @@ function setupToolHandlers() {
                     required: ['name'],
                 },
             },
+            {
+                name: 'rsync_copy',
+                description: 'Copy files/directories between local and remote server via rsync',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        credentialName: { type: 'string', description: 'Name of the stored credential to use' },
+                        localPath: { type: 'string', description: 'Path on the local machine' },
+                        remotePath: { type: 'string', description: 'Path on the remote server' },
+                        direction: { type: 'string', enum: ['toRemote', 'fromRemote'], description: 'Direction of copy (toRemote or fromRemote)' },
+                    },
+                    required: ['credentialName', 'localPath', 'remotePath', 'direction'],
+                },
+            },
         ],
     }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const db = await initDb();
+        console.error('DEBUG: CallToolRequest handler entered for tool:', request.params.name);
+        console.error('DEBUG: Raw arguments:', JSON.stringify(request.params.arguments)); // Log raw args
 
         switch (request.params.name) {
             case 'ssh_exec': {
@@ -126,20 +162,29 @@ function setupToolHandlers() {
 
                 try {
                     const validatedKeyPath = validatePrivateKeyPath(privateKeyPath);
+                    // Escape single quotes in the command for bash -ic
+                    const escapedCommand = command.replace(/'/g, "'\\''");
+                    // Wrap the command in bash -ic '...' to load shell environment
+                    const sshCommand = `ssh -i "${validatedKeyPath}" ${username}@${host} "bash -ic '${escapedCommand}'"`;
+                    console.error('Executing SSH command:', sshCommand); // Log the modified command
 
-                    return new Promise((resolve, reject) => {
-                        const sshCommand = `ssh -i "${validatedKeyPath}" ${username}@${host} "${command}"`;
-
-                        exec(sshCommand, (error, stdout, stderr) => {
+                    return new Promise((resolve) => {
+                        // Increased maxBuffer size for potentially larger output from env loading
+                        exec(sshCommand, { maxBuffer: 1024 * 1024 * 5 }, (error, stdout, stderr) => {
                             if (error) {
+                                // Log both stdout and stderr on error for better debugging
+                                console.error(`SSH error: ${error.message}`);
+                                console.error(`SSH stderr: ${stderr}`);
+                                console.error(`SSH stdout (partial): ${stdout}`);
                                 resolve({
                                     content: [{
                                         type: 'text',
-                                        text: `SSH error: ${stderr}`,
+                                        text: `SSH command failed.\nError: ${error.message}\nstderr: ${stderr}\nstdout: ${stdout}`,
                                     }],
                                     isError: true,
                                 });
                             } else {
+                                console.log(`SSH success: ${stdout}`);
                                 resolve({
                                     content: [{
                                         type: 'text',
@@ -151,10 +196,7 @@ function setupToolHandlers() {
                     });
                 } catch (error: unknown) {
                     return {
-                        content: [{
-                            type: 'text',
-                            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                        }],
+                        content: [{ type: 'text', text: `Error preparing SSH command: ${error instanceof Error ? error.message : String(error)}` }],
                         isError: true,
                     };
                 }
@@ -212,6 +254,71 @@ function setupToolHandlers() {
                         text: `Credential ${name} removed successfully`
                     }]
                 };
+            }
+
+            case 'rsync_copy': {
+                const args = request.params.arguments as {
+                    credentialName: string;
+                    localPath: string;
+                    remotePath: string;
+                    direction: 'toRemote' | 'fromRemote';
+                };
+                console.error('DEBUG: Parsed rsync_copy args:', JSON.stringify(args)); // Log parsed args
+                try {
+                    const cred = await getCredentialByName(db, args.credentialName);
+                    console.error('DEBUG: Fetched credential:', JSON.stringify(cred)); // Log fetched cred
+                    if (!cred) {
+                        throw new Error(`Credential '${args.credentialName}' not found.`);
+                    }
+                    // Explicitly check if privateKeyPath is a string before validating
+                    if (typeof cred.privateKeyPath !== 'string') {
+                        throw new Error(`Credential '${args.credentialName}' has invalid privateKeyPath: ${cred.privateKeyPath}`);
+                    }
+                    const validatedKeyPath = validatePrivateKeyPath(cred.privateKeyPath);
+                    const sshOption = `-e "ssh -i \"${validatedKeyPath}\""`; // Ensure key path is quoted for exec
+                    const remoteSpec = `\"${cred.username}@${cred.host}:${args.remotePath}\"`;
+
+                    // Resolve localPath to an absolute path
+                    const absoluteLocalPath = resolve(args.localPath);
+                    console.log(`DEBUG: Resolved local path: ${absoluteLocalPath}`); // Log resolved path
+
+                    // Ensure the local path is quoted for the exec command
+                    const localSpec = `\"${absoluteLocalPath}\"`;
+
+                    let source, destination;
+                    if (args.direction === 'toRemote') {
+                        source = localSpec;
+                        destination = remoteSpec;
+                    } else { // fromRemote
+                        source = remoteSpec;
+                        destination = localSpec;
+                    }
+
+                    const rsyncCommand = `rsync -avz ${sshOption} ${source} ${destination}`;
+                    console.error('Executing rsync:', rsyncCommand); // Log command
+
+                    return new Promise((resolve) => {
+                        // Increased maxBuffer for rsync as well
+                        exec(rsyncCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+                            if (error) {
+                                console.error(`rsync error: ${stderr}`);
+                                console.error(`rsync stdout (partial): ${stdout}`);
+                                resolve({
+                                    content: [{ type: 'text', text: `rsync failed.\nError: ${error.message}\nstderr: ${stderr}\nstdout: ${stdout}` }],
+                                    isError: true,
+                                });
+                            } else {
+                                console.log(`rsync success: ${stdout}`);
+                                resolve({ content: [{ type: 'text', text: `rsync completed successfully.\nDirection: ${args.direction}\nOutput:\n${stdout}` }] });
+                            }
+                        });
+                    });
+                } catch (error: unknown) {
+                    return {
+                        content: [{ type: 'text', text: `Error preparing rsync command: ${error instanceof Error ? error.message : String(error)}` }],
+                        isError: true,
+                    };
+                }
             }
 
             default:
