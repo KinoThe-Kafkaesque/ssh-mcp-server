@@ -9,12 +9,16 @@ import { exec } from 'child_process';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
+import os from 'os'; // Import os module
 
 // Initialize database
 async function initDb() {
+    const homeDir = os.homedir(); // Get user home directory
+    const dbPath = join(homeDir, 'ssh.db'); // Construct path in home directory
+    console.error(`Initializing database at: ${dbPath}`); // Log the path
     const db = await open({
-        filename: './ssh.db',
+        filename: dbPath, // Use absolute path in home dir
         driver: sqlite3.Database
     });
 
