@@ -1,5 +1,7 @@
 # SSH MCP Server
 
+[![smithery badge](https://smithery.ai/badge/@KinoThe-Kafkaesque/ssh-mcp-server)](https://smithery.ai/server/@KinoThe-Kafkaesque/ssh-mcp-server)
+
 A Model Context Protocol (MCP) server implementation that provides SSH
 capabilities. This server allows for secure remote access and execution through
 the MCP protocol.
@@ -18,6 +20,15 @@ the MCP protocol.
 
 ## Installation
 
+### Installing via Smithery
+
+To install SSH Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@KinoThe-Kafkaesque/ssh-mcp-server):
+
+```bash
+npx -y @smithery/cli install @KinoThe-Kafkaesque/ssh-mcp-server --client claude
+```
+
+### Manual Installation
 1. Clone the repository:
 
 ```bash
