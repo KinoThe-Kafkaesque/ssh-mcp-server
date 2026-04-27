@@ -14,7 +14,7 @@ the MCP protocol.
 
 ## Prerequisites
 
-- Node.js (v16 or higher recommended)
+- Node.js 18 or higher
 - npm or yarn package manager
 - TypeScript knowledge for development
 
@@ -57,95 +57,29 @@ database file will be created automatically when the server starts.
 
 ### Tools
 
-The server provides the following tools:
+The server stores named credentials, then every remote action refers to a
+`credentialName`. `privateKeyPath` must point to an existing private key.
 
-#### ssh_exec
+- `add_credential`: save `{ "name", "host", "username", "privateKeyPath" }`.
+- `list_credentials`: list stored credential records.
+- `remove_credential`: delete `{ "name" }`.
+- `ssh_exec`: run a shell command with `{ "credentialName", "command", "timeout" }`.
+- `ssh_exec_raw`: run an argv-style command array, for example `{ "credentialName": "prod", "command": ["grep", "-E", "foo|bar", "/var/log/app.log"] }`.
+- `scp_copy`: copy one file over SFTP with `{ "credentialName", "localPath", "remotePath", "direction" }`.
+- `rsync_copy`: copy directories or larger trees with rsync and the same transfer shape.
+- `ssh_session_start`, `ssh_session_send`, `ssh_session_read`, `ssh_session_end`, `ssh_session_list`: manage interactive SSH sessions.
+- `ssh_tunnel_start`, `ssh_tunnel_list`, `ssh_tunnel_stop`: manage local or remote port-forwarding tunnels.
 
-Execute a command over SSH.
-
-**Input Parameters:**
-
-- `host`: The host to connect to. (required)
-- `command`: The command to execute. (required)
-- `username`: The username to use for the SSH connection. (required)
-- `privateKeyPath`: The path to the private key file. (required)
-
-**Example Usage:**
-
-```json
-{
-    "tool_name": "ssh_exec",
-    "arguments": {
-        "host": "example.com",
-        "command": "ls -l",
-        "username": "user",
-        "privateKeyPath": "/path/to/private/key"
-    }
-}
-```
-
-**Note:** The `privateKeyPath` must be a valid path to a private key file.
-
-#### add_credential
-
-Add a new SSH credential.
-
-**Input Parameters:**
-
-- `name`: The name of the credential. (required)
-- `host`: The host to connect to. (required)
-- `username`: The username to use for the SSH connection. (required)
-- `privateKeyPath`: The path to the private key file. (required)
-
-**Example Usage:**
+Example:
 
 ```json
 {
-    "tool_name": "add_credential",
-    "arguments": {
-        "name": "my_credential",
-        "host": "example.com",
-        "username": "user",
-        "privateKeyPath": "/path/to/private/key"
-    }
-}
-```
-
-**Note:** The `privateKeyPath` must be a valid path to a private key file.
-
-#### list_credentials
-
-List all stored SSH credentials.
-
-**Input Parameters:**
-
-- None
-
-**Example Usage:**
-
-```json
-{
-    "tool_name": "list_credentials",
-    "arguments": {}
-}
-```
-
-#### remove_credential
-
-Remove a stored SSH credential.
-
-**Input Parameters:**
-
-- `name`: The name of the credential to remove. (required)
-
-**Example Usage:**
-
-```json
-{
-    "tool_name": "remove_credential",
-    "arguments": {
-        "name": "my_credential"
-    }
+  "tool_name": "ssh_exec",
+  "arguments": {
+    "credentialName": "prod",
+    "command": "uptime",
+    "timeout": 120000
+  }
 }
 ```
 
@@ -189,7 +123,7 @@ npm start
 
 ## License
 
-ISC
+MIT
 
 ## Contributing
 
